@@ -1,12 +1,16 @@
-from ABMtest import BusinessModel
+from ABM20 import BusinessModel
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
+import time
 
+starttime = time.time()
 admin_grids_df = pd.read_csv('/Users/zhangkunyi/PythonCode/Doctor Research 4Q/ABM/TokyoMesh/TokyoMesh.csv')
 agent_freq = pd.read_csv('/Users/zhangkunyi/PythonCode/Doctor Research 4Q/ABM/TripTimesFreq/TripTimesFreq.csv')
-type_prob_df = pd.read_csv('/Users/zhangkunyi/PythonCode/Doctor Research 4Q/ABM/OriTypeProb/OriTypeProb.csv')
-model = BusinessModel(1000, admin_grids_df, agent_freq, type_prob_df)
+ori_type_prob_df = pd.read_csv('/Users/zhangkunyi/PythonCode/Doctor Research 4Q/ABM/OriTypeProb/OriTypeProb.csv')
+poi_df = pd.read_csv('/Users/zhangkunyi/PythonCode/Doctor Research 4Q/ABM/TokyoBusinessPOI/TokyoBusinessPOI.csv')
+
+model = BusinessModel(100, admin_grids_df, agent_freq, ori_type_prob_df, poi_df)
 for i in range(1):
     model.step()
 
@@ -18,4 +22,6 @@ for cell in model.grid.coord_iter():
 agent_counts = np.transpose(agent_counts)
 plt.imshow(agent_counts, interpolation="nearest", origin="lower")
 plt.colorbar()
+endtime = time.time()
+print(endtime - starttime)
 print('finished')
