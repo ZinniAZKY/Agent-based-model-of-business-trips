@@ -37,13 +37,17 @@ class BusinessModel(mesa.Model):
        3. Trip patterns of each agent will be extracted from ETC data.
        4. Destination is restricted to grids with POIs."""
 
-    def __init__(self, N, admin_grids_df, agent_freq, ori_type_prob_df, poi_df):
+    def __init__(self, N, admin_grids_df, agent_freq, ori_type_prob_df, poi_df, motif_prob):
         self.num_agents = N
         self.admin_grids_df = admin_grids_df
         self.admin_grids = None
         self.agent_freq = agent_freq
         self.ori_type_prob_df = ori_type_prob_df
         self.poi_df = poi_df
+
+        # add
+        self.motif_prob = motif_prob
+
         self.grid = mesa.space.MultiGrid(admin_grids_df['x'].max() + 1, admin_grids_df['y'].max() + 1, True)
         self.schedule = mesa.time.RandomActivation(self)
         # Load the valid_grids data
@@ -52,107 +56,120 @@ class BusinessModel(mesa.Model):
         self.create_agents()
 
     def load_admin_grids(self):
-        # Load the valid_grids data if not already loaded
+        # Load the Tokyo administrative area grid
         if self.admin_grids is None:
             self.admin_grids = self.admin_grids_df.copy()
 
-    # def create_agents(self):
-    #     # Add a new column for the cumulative probability of each grid for first moves
-    #     self.admin_grids_df['cum_prob_first'] = self.admin_grids_df['firstgridprob'].cumsum()
-    #     # Add a new column for the cumulative probability of each grid for subsequent moves
-    #     self.admin_grids_df['cum_prob_des'] = self.admin_grids_df['desgridprob'].cumsum()
-    #     # Read OriTypeProb data
-    #     type_prob = self.ori_type_prob_df.set_index('Type')['Percentage'].to_dict()
-    #
-    #     for i in range(self.num_agents):
-    #         # Decide how many business trips the agent will take
-    #         trip_times = np.random.choice(self.agent_freq['times'], p=self.agent_freq['frequency'])
-    #
-    #         # Create type of vaild grids before agent's first move
-    #         a = BusinessAgent(i, self, trip_times, self.admin_grids)
-    #         a_type = np.random.choice(list(type_prob.keys()), p=list(type_prob.values()))
-    #         print("Agent", a.unique_id, "Original POI type:", a_type)
-    #         a.type = a_type
-    #
-    #         # Use numpy.random.choice to select a random row directly
-    #         self.admin_grids_df['firstgridprob'] = self.admin_grids_df['firstgridprob'] / self.admin_grids_df['firstgridprob'].sum()
-    #         first_move_row = np.random.choice(self.admin_grids_df.index, p=self.admin_grids_df['firstgridprob'])
-    #         x, y = self.admin_grids_df.loc[first_move_row, ['x', 'y']].values
-    #         self.grid.place_agent(a, (x, y))
-    #
-    #         dest_types = []
-    #         # Use numpy.random.choice to select a random row directly
-    #         for j in range(1, trip_times + 1):
-    #             # add
-    #             des_move_row = np.random.choice(self.admin_grids_df.index, p=self.admin_grids_df['desgridprob'])
-    #             x, y = self.admin_grids_df.loc[des_move_row, ['x', 'y']].values
-    #             poi_subset = self.poi_df[
-    #                 (self.poi_df['OriType'] == a_type) & (self.poi_df['x'] == x) & (self.poi_df['y'] == y)]
-    #             if (x, y) != a.pos:
-    #                 dest_volumes_subset = dict(zip(poi_subset['DesType'], poi_subset['volume']))
-    #                 if len(dest_volumes_subset) > 0:
-    #                     dest_volumes_list = [v for v in dest_volumes_subset.values()]
-    #                     dest_volumes_norm = np.array(dest_volumes_list) / sum(dest_volumes_list)
-    #                     dest_type_idx = np.random.choice(len(dest_volumes_list), p=dest_volumes_norm)
-    #                     dest_type = list(dest_volumes_subset.keys())[dest_type_idx]
-    #                 else:
-    #                     dest_type = ''
-    #                 print("Agent", a.unique_id, "of", j, "move times", "with destination POI of", dest_type)
-    #                 dest_types.append(dest_type)
-    #                 self.grid.move_agent(a, (x, y))
-    #                 a_type = dest_types[-1]
+    def calc_cumulative_probs(self):
+        # Transform probability of each destination to cumulative probability.\
+        self.admin_grids_df['cum_prob_first'] = self.admin_grids_df['firstgridprob'].cumsum()
+        self.admin_grids_df['cum_prob_des'] = self.admin_grids_df['desgridprob'].cumsum()
+
+    def read_type_prob(self):
+        # Read probability of types of origin POIs
+        type_prob = self.ori_type_prob_df.set_index('Type')['Percentage'].to_dict()
+        return type_prob
+
+    def read_movement_patterns(self):
+        # # Reads the agent's movement patterns as a list
+        self.motif_prob['pattern'] = self.motif_prob['pattern'].str.split('-').apply(
+            lambda lst: [str(elem) for elem in lst])
+
+    def assign_number_of_moves(self):
+        # Assign the number of moves to each agent according to probability.
+        return np.random.choice(self.agent_freq['times'], p=self.agent_freq['frequency'])
 
     def create_agents(self):
-        # Add a new column for the cumulative probability of each grid for first moves
-        self.admin_grids_df['cum_prob_first'] = self.admin_grids_df['firstgridprob'].cumsum()
-        # Add a new column for the cumulative probability of each grid for subsequent moves
-        self.admin_grids_df['cum_prob_des'] = self.admin_grids_df['desgridprob'].cumsum()
-        # Read OriTypeProb data
-        type_prob = self.ori_type_prob_df.set_index('Type')['Percentage'].to_dict()
+        # Read POI type probabilities
+        type_prob = self.read_type_prob()
+        trip_times = self.assign_number_of_moves()
 
-        # Generate all random selections for agents and trips
-        trip_times_arr = np.random.choice(self.agent_freq['times'], size=self.num_agents,
-                                          p=self.agent_freq['frequency'])
-        a_types_arr = np.random.choice(list(type_prob.keys()), size=self.num_agents, p=list(type_prob.values()))
-        first_move_rows = np.random.choice(self.admin_grids_df.index, size=self.num_agents,
-                                           p=self.admin_grids_df['firstgridprob'] / self.admin_grids_df[
-                                               'firstgridprob'].sum())
-        des_move_rows = np.random.choice(self.admin_grids_df.index, size=(self.num_agents, trip_times_arr.max()),
-                                         p=self.admin_grids_df['desgridprob'])
-
-        # Loop through agents and apply selections
         for i in range(self.num_agents):
-            trip_times = trip_times_arr[i]
-            a_type = a_types_arr[i]
 
-            # Create type of vaild grids before agent's first move
+            # POI type to assign initial position to each agent
             a = BusinessAgent(i, self, trip_times, self.admin_grids)
+            a_type = np.random.choice(list(type_prob.keys()), p=list(type_prob.values()))
             print("Agent", a.unique_id, "Original POI type:", a_type)
             a.type = a_type
 
-            first_move_row = first_move_rows[i]
-            # 问题：代理初始位置的坐标目前仅根据车辆数随机分布在所有东京格网中，需要进一步设置约束条件
-            x, y = self.admin_grids_df.loc[first_move_row, ['x', 'y']].values
-            self.grid.place_agent(a, (x, y))
+            # Assign an initial position to each agent
+            self.admin_grids_df['firstgridprob'] = self.admin_grids_df['firstgridprob'] / self.admin_grids_df['firstgridprob'].sum()
+            # first_move_row = np.random.choice(self.admin_grids_df.index, p=self.admin_grids_df['firstgridprob'].values)
+            first_move_row = np.random.choice(self.admin_grids_df.index, p=self.admin_grids_df['firstgridprob'])
+            ori_x, ori_y = self.admin_grids_df.loc[first_move_row, ['x', 'y']].values
+            self.grid.place_agent(a, (ori_x, ori_y))
 
-            dest_types = []
-            for j in range(1, trip_times + 1):
-                des_move_row = des_move_rows[i, j - 1]
-                x, y = self.admin_grids_df.loc[des_move_row, ['x', 'y']].values
-                poi_subset = self.poi_df[
-                    (self.poi_df['OriType'] == a_type) & (self.poi_df['x'] == x) & (self.poi_df['y'] == y)]
-                if (x, y) != a.pos:
+            # add part: First check the number of moves randomly generated by the agent. If it is between 2-7, it is assigned a travel mode according to the probability. Detects the movement of the agent in terms of movement patterns within the travel mode.
+            # Specifically, if the destination of a certain step of the pattern is the same as the destination of a previous step, it is forced to move to this destination instead of random destination selection.
+            # If the destination of a certain step of the pattern is different from the destination of each previous step, randomly select the destination and check whether the pattern of the previous destination is the same.
+            if 2 <= trip_times <= 7:
+                xlist = [ori_x]
+                ylist = [ori_y]
+                dest_types = [a_type]
+                patternsubset = self.motif_prob.loc[self.motif_prob['tripnum'] == trip_times, 'pattern']
+                a_pattern = np.random.choice(patternsubset, p=self.motif_prob.loc[self.motif_prob['tripnum'] == trip_times, 'prob'])
+                for j in range(1, trip_times + 1):
+
+                    if np.all(a_pattern[:j] != a_pattern[j]):
+                    # if all(a_pattern[k] != a_pattern[j] for k in range(j)):
+                        des_move_row = np.random.choice(self.admin_grids_df.index,
+                                                        p=self.admin_grids_df['desgridprob'])
+                        x, y = self.admin_grids_df.loc[des_move_row, ['x', 'y']].values
+
+                        while np.any((x == np.array(xlist)) & (y == np.array(ylist))):
+                        # while any((x == xprev and y == yprev) for xprev, yprev in zip(xlist, ylist)):
+                            des_move_row = np.random.choice(self.admin_grids_df.index,
+                                                            p=self.admin_grids_df['desgridprob'])
+                            x, y = self.admin_grids_df.loc[des_move_row, ['x', 'y']].values
+
+                        poi_subset = self.poi_df[
+                            (self.poi_df['OriType'] == a_type) & (self.poi_df['x'] == x) & (self.poi_df['y'] == y)]
+                        dest_volumes_subset = dict(zip(poi_subset['DesType'], poi_subset['volume']))
+                        if len(dest_volumes_subset) > 0:
+                            dest_volumes_list = [v for v in dest_volumes_subset.values()]
+                            dest_volumes_norm = np.array(dest_volumes_list) / sum(dest_volumes_list)
+                            dest_type_idx = np.random.choice(len(dest_volumes_list), p=dest_volumes_norm)
+                            dest_type = list(dest_volumes_subset.keys())[dest_type_idx]
+                        else:
+                            dest_type = ''
+                            print('Destination choice model locates in grids with no POIs.')
+                        # print("Agent", a.unique_id, "of", j, "move times", "with destination POI of", dest_type)
+                        dest_types.append(dest_type)
+                        self.grid.move_agent(a, (x, y))
+                        xlist.append(x)
+                        ylist.append(y)
+                        a_type = dest_types[-1]
+                    else:
+                        for k, element in enumerate(a_pattern[:j]):
+                            if element == a_pattern[j]:
+                                prev_index = k
+                                dest_type = dest_types[prev_index]
+                                # print("Agent", a.unique_id, "of", j, "move times", "with destination POI of", dest_type)
+                                dest_types.append(dest_type)
+                                self.grid.move_agent(a, (xlist[prev_index], ylist[prev_index]))
+                                xlist.append(xlist[prev_index])
+                                ylist.append(ylist[prev_index])
+                                a_type = dest_types[-1]
+                                break
+            else:
+                dest_types = [a_type]
+                # Use numpy.random.choice to select a random row directly
+                for j in range(1, trip_times + 1):
+                    des_move_row = np.random.choice(self.admin_grids_df.index, p=self.admin_grids_df['desgridprob'])
+                    x, y = self.admin_grids_df.loc[des_move_row, ['x', 'y']].values
+
+                    poi_subset = self.poi_df[
+                        (self.poi_df['OriType'] == a_type) & (self.poi_df['x'] == x) & (self.poi_df['y'] == y)]
                     dest_volumes_subset = dict(zip(poi_subset['DesType'], poi_subset['volume']))
                     if len(dest_volumes_subset) > 0:
                         dest_volumes_list = [v for v in dest_volumes_subset.values()]
-                        # 问题：起点POI类型和终点格网内包含的POI类型之间可能不存在volume，使posilibity分母为0，需要修改
-                        # if sum(dest_volumes_list) == 0:
                         dest_volumes_norm = np.array(dest_volumes_list) / sum(dest_volumes_list)
                         dest_type_idx = np.random.choice(len(dest_volumes_list), p=dest_volumes_norm)
                         dest_type = list(dest_volumes_subset.keys())[dest_type_idx]
                     else:
                         dest_type = ''
-                    print("Agent", a.unique_id, "of", j, "move times", "with destination POI of", dest_type)
+                        print('Destination choice model locates in grids with no POIs.')
+                    # print("Agent", a.unique_id, "of", j, "move times", "with destination POI of", dest_type)
                     dest_types.append(dest_type)
                     self.grid.move_agent(a, (x, y))
                     a_type = dest_types[-1]
