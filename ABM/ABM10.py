@@ -105,6 +105,7 @@ class BusinessModel(mesa.Model):
                     y = admin_grid['y'].item()
                     if (x, y) != a.pos:
                         self.grid.move_agent(a, (x, y))
+                        print("break")
                         break
                     break
 
