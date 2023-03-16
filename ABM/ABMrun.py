@@ -9,8 +9,9 @@ admin_grids_df = pd.read_csv('/Users/zhangkunyi/PythonCode/Doctor Research 4Q/AB
 agent_freq = pd.read_csv('/Users/zhangkunyi/PythonCode/Doctor Research 4Q/ABM/TripTimesFreq/TripTimesFreq.csv')
 ori_type_prob_df = pd.read_csv('/Users/zhangkunyi/PythonCode/Doctor Research 4Q/ABM/OriTypeProb/OriTypeProb.csv')
 poi_df = pd.read_csv('/Users/zhangkunyi/PythonCode/Doctor Research 4Q/ABM/TokyoBusinessPOI/TokyoBusinessPOI.csv')
+motif_prob = pd.read_csv('/Users/zhangkunyi/PythonCode/Doctor Research 4Q/ABM/MotifProb/MotifProb.csv')
 
-model = BusinessModel(100, admin_grids_df, agent_freq, ori_type_prob_df, poi_df)
+model = BusinessModel(100, admin_grids_df, agent_freq, ori_type_prob_df, poi_df, motif_prob)
 for i in range(1):
     model.step()
 
