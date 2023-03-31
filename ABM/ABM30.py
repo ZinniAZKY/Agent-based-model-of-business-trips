@@ -229,6 +229,7 @@ class BusinessModel(mesa.Model):
                                 dest_type = dest_types[k]
                                 dest_types.append(dest_type)
                                 poi_x, poi_y = poi_xlist[k], poi_ylist[k]
+                                x, y = xlist[k], ylist[k]
                                 poi_xlist.append(poi_x)
                                 poi_ylist.append(poi_y)
                                 xlist.append(x)
