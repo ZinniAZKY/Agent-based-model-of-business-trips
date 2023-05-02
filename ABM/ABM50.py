@@ -7,6 +7,7 @@ import numpy as np
 import concurrent.futures
 import traceback
 import math
+from keras.models import load_model
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
@@ -56,11 +57,12 @@ class BusinessModel(mesa.Model):
         poi_x, poi_y: temporary geographical coordinates of agent's each destination direved from x, y.
         oriloc_subset, oriloc_poi_subset, oritime_subset, poi_subset, pattern_subset: all the temporary subset."""
 
-    def __init__(self, N, admin_grids, agent_freq, ori_type_prob_df, poi_df, startpoi_df, des_type, motif_prob, distance_prob,
-                 time_prob):
+    def __init__(self, N, admin_grids, area_feature, agent_freq, ori_type_prob_df, poi_df, startpoi_df, des_type, motif_prob, distance_prob, time_prob):
+        # self.model = load_model(r'C:\Users\zhang\PycharmProjects\pythonProject\Doctor Research 4Q\DLGModel.h5', compile=False)
         self.all_agents_history = None
         self.num_agents = N
         self.admin_grids = admin_grids
+        self.area_feature = area_feature
         self.agent_freq = agent_freq
         self.ori_type_prob_df = ori_type_prob_df
         self.poi_df = poi_df
@@ -138,12 +140,70 @@ class BusinessModel(mesa.Model):
         random_time = start_time + timedelta(minutes=random.randint(0, time_diff.seconds // 60))
         return random_time
 
+    def predict_destination_DL(self, dist_x, dist_y):
+        # Get the AdminID for the origin grid
+        origin_admin_id = self.admin_grids.loc[(self.admin_grids['x'] == dist_x) & (self.admin_grids['y'] == dist_y), 'adminid'].values[0]
+
+        # Get the features of the origin admin area
+        origin_features = self.area_feature.loc[self.area_feature['adminid'] == origin_admin_id, 'LU100':'y_area']
+
+        # Assuming origin_features is a pandas DataFrame with your features
+        origin_df = pd.DataFrame([origin_features.values[0]] * 53, columns=origin_features.columns)
+        origin_df.columns = [f"{col}_ori" for col in origin_df.columns]
+
+        # Get the features of each potential destination area
+        dest_df = self.area_feature.loc[:, 'LU100':'y_area'].reset_index(drop=True)
+        dest_df.columns = [f"{col}_des" for col in dest_df.columns]
+
+        # Add a column for the destination area ID
+        dest_df['y'] = self.area_feature['adminid']
+
+        # Concatenate the origin and destination dataframes
+        input_df = pd.concat([origin_df, dest_df], axis=1)
+
+        # calculate the haversine distance
+        input_df['distance'] = input_df.apply(
+            lambda row: haversine_distance(row['x_area_ori'], row['y_area_ori'], row['x_area_des'], row['y_area_des']),
+            axis=1)
+
+        # normalize the distance column
+        max_distance = 73.67221787
+        min_distance = 0.4108906248
+        input_df['distance'] = input_df['distance'].clip(min_distance, max_distance)
+        input_df['distance'] = (input_df['distance'] - min_distance) / (max_distance - min_distance)
+
+        # list of columns to drop
+        drop_columns = ["x_area_ori", "y_area_ori", "x_area_des", "y_area_des", "y"]
+
+        # Drop these columns to get only the feature columns
+        model_features = input_df.drop(columns=drop_columns)
+
+        # Convert the features into the format that the model expects (numpy array)
+        model_input = model_features.values
+
+        # Use the model to predict the probabilities
+        dlmodel = load_model(r'C:\Users\zhang\PycharmProjects\pythonProject\Doctor Research 4Q\DLGModel.h5', compile=False)
+        probabilities = dlmodel.predict(model_input, verbose=0)
+
+        # Convert the numpy array to a pandas DataFrame
+        prob_df = pd.DataFrame(data=probabilities, columns=self.area_feature['adminid'].values)
+
+        # Use the max value or the max sum up value of a column to decide destination.
+        des_area_prob = prob_df.sum(axis=0) / prob_df.sum(axis=0).sum()
+        final_destination = np.random.choice(des_area_prob.index, p=des_area_prob.values)
+        # final_destination = prob_df.sum(axis=0).idxmax()
+        # final_destination = prob_df.max(axis=0).idxmax()
+
+        return final_destination
+
     def assign_dest_type(self, ori_type, dist_x, dist_y, xlist=None, ylist=None):
-        max_attempts = 500
+        final_destination = self.predict_destination_DL(dist_x, dist_y)
+        # print(final_destination)
+        max_attempts = 100
         attempt = 0
 
         while attempt < max_attempts:
-            nearby_grids = self.filter_buffer_grids(dist_x, dist_y)
+            nearby_grids = self.filter_buffer_grids(dist_x, dist_y, final_destination)
             # For distance larger than 100km.
             if nearby_grids is None:
                 return None, None, None, None, None
@@ -161,7 +221,7 @@ class BusinessModel(mesa.Model):
             selected_poi = poi_subset.sample()
             x, y = selected_poi[['x', 'y']].values[0]
 
-            max_inner_attempts = 500
+            max_inner_attempts = 100
             inner_attempt = 0
 
             if xlist is not None and ylist is not None:
@@ -198,12 +258,48 @@ class BusinessModel(mesa.Model):
         }
         return dist_ranges[dist_name]
 
-    def filter_buffer_grids(self, dist_x, dist_y):
-        max_attempts = 500
+    # def filter_buffer_grids(self, dist_x, dist_y):
+    #     max_attempts = 5000
+    #     attempt = 0
+    #
+    #     while attempt < max_attempts:
+    #         # assign distance to one trip, if there are no available grids, reselect different distances.
+    #         dist_range = self.assign_distance()
+    #         # calculate distance from the original position to each grid
+    #         self.admin_grids['distance'] = np.sqrt(
+    #             (self.admin_grids['x'] - dist_x) ** 2 + (self.admin_grids['y'] - dist_y) ** 2)
+    #
+    #         # create boolean mask based on distance range
+    #         if dist_range == 2:
+    #             mask = self.admin_grids['distance'] <= dist_range
+    #         elif dist_range == 100:
+    #             return None
+    #         else:
+    #             mask = (self.admin_grids['distance'] >= dist_range[0]) & (self.admin_grids['distance'] <= dist_range[1])
+    #
+    #         # filter rows based on mask of distance
+    #         nearby_grids = self.admin_grids.loc[mask]
+    #
+    #         if not nearby_grids.empty:
+    #             break
+    #
+    #         # sum_desgridprob = nearby_grids['desgridprob'].sum()
+    #         attempt += 1
+    #
+    #     if attempt == max_attempts:
+    #         print("Infinite loop in filter_buffer_grids")
+    #         return None
+    #
+    #     nearby_grids = nearby_grids.copy()
+    #     # nearby_grids.loc[:, 'desgridprob'] = nearby_grids['desgridprob'] / sum_desgridprob
+    #     return nearby_grids
+
+    def filter_buffer_grids(self, dist_x, dist_y, final_destination):
+        max_attempts = 100
         attempt = 0
 
         while attempt < max_attempts:
-            # assign distance to one trip proportionally
+            # assign distance to one trip, if there are no available grids, reselect different distances.
             dist_range = self.assign_distance()
             # calculate distance from the original position to each grid
             self.admin_grids['distance'] = np.sqrt(
@@ -217,7 +313,10 @@ class BusinessModel(mesa.Model):
             else:
                 mask = (self.admin_grids['distance'] >= dist_range[0]) & (self.admin_grids['distance'] <= dist_range[1])
 
-            # filter rows based on mask of distance
+            # Add an extra condition to the mask to filter out grids that do not belong to the final destination adminid
+            mask = mask & (self.admin_grids['adminid'] == final_destination)
+
+            # filter rows based on mask of distance and adminid
             nearby_grids = self.admin_grids.loc[mask]
 
             if not nearby_grids.empty:
@@ -352,7 +451,7 @@ class BusinessModel(mesa.Model):
         self.all_agents_history = pd.DataFrame(
             columns=['agent_id', 'grid_x', 'grid_y', 'geo_x', 'geo_y', 'type', 'oritime'])
 
-        timeout = 10000
+        timeout = 600
 
         with concurrent.futures.ThreadPoolExecutor() as executor:
             for i in range(self.num_agents):
